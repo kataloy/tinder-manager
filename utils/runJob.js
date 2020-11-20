@@ -1,12 +1,12 @@
 const runJob = async (cb, interval) => {
   try {
     await cb();
-  } catch(error) {
+  } catch (error) {
     console.error(error);
   }
 
   setTimeout(() => {
-    runJob(cb, interval)
+    runJob(cb, interval);
   }, interval);
 };
 

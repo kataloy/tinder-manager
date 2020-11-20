@@ -1,114 +1,70 @@
 const axios = require('axios');
-const ApiError = require('./errors/ApiError');
 const config = require('./config');
 
 module.exports = class Tinder {
-  constructor() {}
-
-  async api (endpoint, axiosData) {
-    // todo: add axios.create
-    // const instance = axios.create({
-    //   baseURL: 'https://api.gotinder.com/',
-    //   headers: {
-    //     'x-auth-token': config.me.token,
-    //     'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36',
-    //     locale: 'ru',
-    //   },
-    //   data: axiosData,
-    // })
-
-    const axiosConfig = {
+  constructor() {
+    this.api = axios.create({
+      baseURL: 'https://api.gotinder.com/',
       headers: {
         'x-auth-token': config.me.token,
         'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36',
       },
-    };
-
-    try {
-      const { data } = await axios.post(
-        `https://api.gotinder.com/${endpoint}?locale=ru`,
-        axiosData,
-        axiosConfig,
-      );
-
-      if (data.error) {
-        throw new ApiError(data.error);
-      }
-
-      return data;
-    } catch (e) {
-      console.error(e);
-    }
+    });
   }
 
-  async sendMessage(message, id, matchId) {
-    const endpoint = `user/matches/${matchId}`
-
-    const axiosData = {
+  sendMessage(match, message) {
+    return this.api.post(`/user/matches/${match._id}`, {
       message,
-      id,
-    };
-
-    return this.api(endpoint, axiosData);
+      id: match.person._id,
+    });
   }
 
-  async getUpdatedMatches(lastActivityDate = '') {
-    const { matches } =  await this.api('updates', {
-      last_activity_date: lastActivityDate,
-      //last_activity_date: '2020-10-10T11:44:34.206Z',
+  async sendGeneratedMessage(match) {
+    const indexes = {};
+
+    match.messages.forEach((message, messageIndex) => {
+      if (message.from !== config.me.id) return;
+
+      config.messages.forEach((template, templateIndex) => {
+        if (message.message.toLowerCase() === template.toLowerCase()) {
+          indexes[templateIndex] = {
+            messageIndex,
+            templateIndex,
+          };
+        }
+      });
     });
 
-    return matches;
-  }
+    const reversedIndexes = [...Object.values(indexes)].reverse();
+    const { templateIndex, messageIndex } = reversedIndexes.find(Boolean) || {};
 
-  async getUpdatedGoalMatches() {
-    const matches = await this.getUpdatedMatches();
-    const otherUsersIds = config.otherUsers.map(item => item.id);
-
-    return matches.filter(item => otherUsersIds.includes(item.person._id));
-  }
-
-  async generateMessage() {
-    // todo: write
-  }
-
-  async shouldWrite(message, toMe, fromMe) {
-    let hasHi = 0;
-    let hasOk = 0;
-
-    for (const item of toMe) {
-      if (item.toLowerCase().includes('привет')) {
-        hasHi++;
-      }
-
-      if (item.includes('Нормально') || item.includes('нормально')
-        || item.includes('Хорошо') || item.includes('хорошо')) {
-        hasOk++;
-      }
+    if (messageIndex === undefined) {
+      return this.sendMessage(match, config.messages[0]);
     }
 
-    console.log(fromMe);
-
-    switch (message) {
-      case config.messages.howAreYou:
-        return !!hasHi && !fromMe.includes(config.messages.howAreYou);
-      case config.messages.whatAreYouDoing:
-        return !!hasOk && !fromMe.includes(config.messages.whatAreYouDoing);
+    if (templateIndex + 1 === config.messages.length) {
+      console.log(`Already sent all messages to #${match.person._id} user`);
+      return;
     }
+
+    const nextMessage = match.messages[messageIndex + 1];
+
+    if (!nextMessage) return;
+
+    return this.sendMessage(match, config.messages[templateIndex + 1]);
   }
 
-  async getContentType(target) {
-    const toMe = target.messages.filter(item => item.to === config.me.id);
-    const fromMe = target.messages.filter(item => item.from === config.me.id);
+  async getMatches(lastActivityDate = null) {
+    const { data } = await this.api.post('/updates', {
+      last_activity_date: lastActivityDate,
+    });
 
-    if (!toMe.length) return;
-
-    const messagesToMe = toMe.map(item => item.message);
-    const messagesFromMe = fromMe.map(item => item.message);
-
-    if (await this.shouldWrite(config.howAreYou, messagesToMe, messagesFromMe))
-      return config.howAreYou;
-    if (await this.shouldWrite(config.whatAreYouDoing, messagesToMe, messagesFromMe))
-      return config.whatAreYouDoing;
+    return data.matches;
   }
-}
+
+  async getFilteredMatches() {
+    const matches = await this.getMatches();
+
+    return matches.filter((item) => config.otherUserIds.includes(item.person._id));
+  }
+};
